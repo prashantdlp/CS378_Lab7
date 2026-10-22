@@ -1,0 +1,105 @@
+Socket virtual-network emulator: build and run
+==============================================
+
+Requirements
+------------
+- Linux
+- g++ (C++ compiler)
+- Python 3
+- The Oracle Node (ON) and Virtual Nodes (VNs) must be able to reach each
+  other's chosen non-loopback IPv4 addresses.
+- TCP port 5000 must be available on the ON host. Each VN needs an available
+  UDP port on its host.
+
+The supplied oracle-node-config.txt describes five VNs, A through E. Start one
+ON and five VNs for this configuration.
+
+1. Build
+--------
+From this directory:
+
+    g++ -std=c++17 -Wall -Wextra -pedantic on.cpp parse_config.cpp -o on
+
+2. Choose the address to use
+----------------------------
+Find the machine's reachable IPv4 address (for example, with `hostname -I`).
+Use that address for both ON_IP and VN_IP when all processes run on one
+machine. Do not use 127.0.0.1: the programs reject loopback addresses.
+
+If the ON and VNs run on different machines:
+- ON_IP is the ON machine's reachable address.
+- Each VN_IP is the address of the machine running that VN.
+- Make sure routing/firewall rules allow TCP 5000 from each VN to the ON and
+  allow UDP traffic between the VNs.
+
+3. Start the Oracle Node
+-----------------------
+In a terminal in this directory, run:
+
+    ./on oracle-node-config.txt
+
+The ON listens on TCP port 5000. It waits for the configured number of VNs to
+connect before distributing their initial link-state messages.
+
+4. Start the Virtual Nodes
+--------------------------
+Open one terminal per VN. Replace YOUR_HOST_IP with the appropriate reachable
+non-loopback IPv4 address. If running all VNs on one machine, use that same
+address for each command and give each VN a different UDP port:
+
+    python3 vn.py YOUR_HOST_IP YOUR_HOST_IP 5101
+    python3 vn.py YOUR_HOST_IP YOUR_HOST_IP 5102
+    python3 vn.py YOUR_HOST_IP YOUR_HOST_IP 5103
+    python3 vn.py YOUR_HOST_IP YOUR_HOST_IP 5104
+    python3 vn.py YOUR_HOST_IP YOUR_HOST_IP 5105
+
+Run one command in each terminal. The VNs are assigned IDs in connection order:
+the first is A, the second B, and so on. Start exactly five VNs for the
+supplied five-node config. For VNs on separate hosts, use that host's address
+as VN_IP and choose a UDP port that is free on that host.
+
+Each VN prints its ID and current neighbors after receiving its LINK-STATE
+message. It sends link-state advertisements periodically and prints its
+known link-state graph periodically.
+
+Topology configuration
+----------------------
+The config file contains the upper-right triangle of a symmetric adjacency
+matrix: the first data row lists A-to-later-node costs, the next row lists
+B-to-later-node costs, and so on. Blank lines and lines starting with # are
+ignored. A cost of -1 means there is no link (unreachable/not a neighbor);
+finite link costs must be from 1 through 65535.
+
+For the supplied five-node config, the rows contain 4, 3, 2, and 1 costs.
+Keep the same number of rows and entries while the ON is running. The ON does
+not permit changing the node count during an emulation.
+
+Changing topology while running
+-------------------------------
+Edit oracle-node-config.txt while the ON is running. The ON checks the config
+file about every 0.5 seconds. If the file parses successfully and describes
+the same number of nodes, the ON applies changed costs and sends an updated
+LINK-STATE message to each active VN.
+
+Both transitions are supported:
+- -1 to a finite cost adds the link to both endpoints' neighbor lists.
+- A finite cost to -1 removes the link from both endpoints' neighbor lists.
+- A finite cost changed to another finite cost updates the link cost.
+
+After receiving a changed neighbor list, a VN increments its LSP sequence
+number and advertises its current links. When a link is removed, it also sends
+that updated LSP to its previous neighbors so they can replace stale
+link-state information. The periodic advertisements continue afterward.
+Allow time for the new advertisements to be flooded through the connected
+network.
+
+The ON keeps the previous topology if a changed file is invalid or has a
+different node count, and prints an error. Fix the file by saving a valid
+topology; the ON will check again when the file's modification time or size
+changes. The node count cannot change without stopping and restarting the
+emulation with the new configuration.
+
+5. Stop
+-------
+Press Ctrl+C in each VN terminal. Stop the ON with Ctrl+C after stopping the
+VNs.
